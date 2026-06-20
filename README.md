@@ -43,6 +43,37 @@ Then in Final Cut: **File → Import → XML…** and select the `.fcpxml`.
 > anything. Import the **XML**, not the raw MP4s — that is how the metadata (and
 > the corrected frame rate) comes along.
 
+## Example run
+
+```
+DJI → FCPXML
+  source  /Users/pd/dumpster/dji_org
+  output  /Users/pd/dumpster/dji_conv
+  36 clip(s)
+
+  ✓ [1/36] DJI_20260619141719_0001_D.MP4   59.94 fps  Wide (28mm) · ISO 200 · 1/120s · f/2.8 · D-LogM
+  ✓ [2/36] DJI_20260619141730_0002_D.MP4   59.94 fps  Medium Tele (70mm) · ISO 125 (100–125) · 1/240s · f/2.8 · D-LogM
+  ✓ [3/36] DJI_20260619141919_0003_D.MP4   100 fps · 4× slow-mo restored  Tele (168mm) · ISO 250 (250–320) · 1/240s · f/2.8 · D-LogM
+  ✓ [4/36] DJI_20260619142013_0005_D.MP4   120 fps · 4× slow-mo restored  Medium Tele (70mm) · ISO 100 (100–125) · 1/240s · f/2.8 · D-LogM
+  ✓ [5/36] DJI_20260619142040_0006_D.MP4   100 fps · 4× slow-mo restored  Tele (168mm) · ISO 100 (100–320) · 1/240s · f/2.8 · D-LogM
+  ✓ [6/36] DJI_20260619142109_0007_D.MP4   120 fps · 4× slow-mo restored  Medium Tele (70mm) · ISO 125 (100–160) · 1/160s · f/2.8 · D-LogM
+  ✓ [7/36] DJI_20260619142253_0008_D.MP4   120 fps · 4× slow-mo restored  Medium Tele (70mm) · ISO 100 (100–160) · 1/240s · f/2.8 · D-LogM
+  ✓ [8/36] DJI_20260619142401_0012_D.MP4   120 fps · 4× slow-mo restored  Wide (28mm) · ISO 125 (100–125) · 1/120s · f/2.8 · D-LogM
+  …
+  ✓ [36/36] DJI_20260619164846_0074_D.MP4   120 fps · 4× slow-mo restored  Wide (28mm) · ISO 160 (100–250) · 1/3200s · f/2.8 · D-LogM
+
+  ────────────────────────────────────────────────────────────
+  ✓ 36 written   ↑ 34 slow-mo restored   ✗ 0 skipped
+  fcpxml  /Users/pd/dumpster/dji_conv/DJI_metadata.fcpxml
+  import  File ▸ Import ▸ XML…
+```
+
+Normal clips (e.g. a real 59.94 fps shot) show their frame rate and pass through
+untouched; slow-motion clips show the restored frame rate and the detected
+factor. In a terminal the badges and frame rates are colorized; piped or
+redirected output is plain text. The imported Final Cut **event is named after
+the source folder** (`dji_org` above).
+
 ## Requirements
 
 - **ffmpeg** and **ffprobe**: `brew install ffmpeg`. `ffprobe` reads

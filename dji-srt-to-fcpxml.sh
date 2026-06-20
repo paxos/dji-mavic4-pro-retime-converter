@@ -14,7 +14,7 @@
 # carries both a playback clock and a real-world capture clock; their ratio is
 # the slow-motion factor. Conformed slow-motion clips are re-timestamped to their
 # true frame rate (lossless container remux, no re-encode) so you can do your own
-# speed-ramping in Final Cut. Normal clips are copied through untouched.
+# speed-ramping in Final Cut. Normal clips are copied through unchanged.
 #
 # Usage: dji-srt-to-fcpxml.sh <source-folder> [output-folder]
 #
@@ -62,6 +62,19 @@ if [ "$outdir" = "$folder" ]; then
   echo "Error: output folder must differ from the source folder (it would overwrite originals)." >&2
   exit 2
 fi
+
+# --- console styling (gated per stream, so redirected output stays clean) -----
+if [ -t 1 ]; then
+  B=$'\033[1m'; D=$'\033[2m'; R=$'\033[0m'
+  GRN=$'\033[32m'; CYN=$'\033[36m'; YEL=$'\033[33m'
+else
+  B=''; D=''; R=''; GRN=''; CYN=''; YEL=''
+fi
+if [ -t 2 ]; then EY=$'\033[33m'; ED=$'\033[2m'; ER=$'\033[0m'; else EY=''; ED=''; ER=''; fi
+rule="────────────────────────────────────────────────────────────"
+
+# skip <name> <reason>  — a non-fatal per-clip notice on stderr.
+skip() { printf '  %s✗%s %-30s  %s%s%s\n' "$EY" "$ER" "$1" "$ED" "$2" "$ER" >&2; }
 
 # --- helpers ------------------------------------------------------------------
 
@@ -195,7 +208,22 @@ skipped=0
 slowcount=0
 
 shopt -s nullglob nocaseglob
-for mp4 in "$folder"/*.mp4; do
+mp4s=( "$folder"/*.mp4 )
+total=${#mp4s[@]}
+
+printf '\n%sDJI → FCPXML%s\n' "$B" "$R"
+printf '  %ssource%s  %s\n'   "$D" "$R" "$folder"
+printf '  %soutput%s  %s\n'   "$D" "$R" "$outdir"
+if [ "$total" -eq 0 ]; then
+  printf '  %sno .MP4 clips found%s\n\n' "$YEL" "$R"
+  echo "No MP4 clips found in: $folder" >&2
+  exit 1
+fi
+printf '  %s%d clip(s)%s\n\n' "$D" "$total" "$R"
+
+idx=0
+for mp4 in "${mp4s[@]}"; do
+  idx=$((idx + 1))
   name="$(basename "$mp4")"
   stem="${name%.*}"
 
@@ -203,13 +231,13 @@ for mp4 in "$folder"/*.mp4; do
   srt="$folder/$stem.SRT"
   [ -f "$srt" ] || srt="$folder/$stem.srt"
   if [ ! -f "$srt" ]; then
-    echo "skip (no SRT):        $name" >&2
+    skip "$name" "no SRT sidecar"
     skipped=$((skipped + 1)); continue
   fi
 
   # Camera settings + slow-motion factor from the SRT.
   if ! srt_out="$(parse_srt "$srt")"; then
-    echo "skip (empty SRT):     $name" >&2
+    skip "$name" "empty SRT (no telemetry)"
     skipped=$((skipped + 1)); continue
   fi
   eval "$srt_out"
@@ -222,13 +250,13 @@ for mp4 in "$folder"/*.mp4; do
     inv="$(awk -v f="$srt_factor" 'BEGIN { printf "%.10f", 1.0 / f }')"
     if ! ffmpeg -y -loglevel error -itsscale "$inv" -i "$mp4" \
            -map 0:v:0 -c:v copy "$out_mp4" 2>/dev/null; then
-      echo "skip (retime failed): $name" >&2
+      skip "$name" "retime failed"
       rm -f "$out_mp4"; skipped=$((skipped + 1)); continue
     fi
     slowmo=1
   else
     if ! cp -f "$mp4" "$out_mp4"; then
-      echo "skip (copy failed):   $name" >&2
+      skip "$name" "copy failed"
       skipped=$((skipped + 1)); continue
     fi
   fi
@@ -238,7 +266,7 @@ for mp4 in "$folder"/*.mp4; do
             -show_entries stream=width,height,r_frame_rate,nb_frames \
             -of csv=p=0 "$out_mp4" 2>/dev/null)" || vinfo=""
   if [ -z "$vinfo" ]; then
-    echo "skip (ffprobe fail):  $name" >&2
+    skip "$name" "ffprobe could not read output"
     rm -f "$out_mp4"; skipped=$((skipped + 1)); continue
   fi
   IFS=, read -r w h rfr nbf <<<"$vinfo"
@@ -264,7 +292,8 @@ for mp4 in "$folder"/*.mp4; do
   fdur="${den}/${num}s"
   tdur="$((N * den))/${num}s"
 
-  # True (display) fps as a rounded integer, for the slow-motion keyword.
+  # Frame rate for display (e.g. 59.94) and as a rounded integer for the keyword.
+  fpsdisp="$(awk -v n="$num" -v e="$den" 'BEGIN { f = n / e; if (f == int(f)) printf "%d", f; else printf "%.2f", f }')"
   truefps="$(awk -v n="$num" -v e="$den" 'BEGIN { if (e + 0 > 0) printf "%d", n / e + 0.5; else print 0 }')"
 
   # Build the keyword list.
@@ -328,14 +357,22 @@ for mp4 in "$folder"/*.mp4; do
   done
   printf '      </asset-clip>\n' >> "$clip_tmp"
 
-  if [ "$iso_min" != "$iso_max" ]; then isokw=" ISO${iso_min}-${iso_max}"; else isokw=""; fi
+  # Human-readable detail line (shared by both clip types).
+  sep=" ${D}·${R} "
+  det="$camname"
+  det="${det:+$det$sep}ISO $iso_dom"
+  [ "$iso_min" != "$iso_max" ] && det="$det ${D}(${iso_min}–${iso_max})${R}"
+  [ -n "$shutter" ] && det="$det${sep}${shutter}s"
+  [ -n "$fnum" ]    && det="$det${sep}f/$fnum"
+  [ -n "$cprof" ]   && det="$det${sep}$cprof"
+
   if [ "$slowmo" -eq 1 ]; then
-    printf 'ok slowmo %sx -> %sfps: %-26s keywords[%ss f/%s %s%s]\n' \
-      "$srt_factor" "$truefps" "$name" "$shutter" "$fnum" "$cprof" "$isokw"
+    printf '  %s✓%s %s[%d/%d]%s %-30s  %s%s fps%s %s· %s× slow-mo restored%s  %s\n' \
+      "$CYN" "$R" "$D" "$idx" "$total" "$R" "$name" "$B$CYN" "$truefps" "$R" "$D" "$srt_factor" "$R" "$det"
     slowcount=$((slowcount + 1))
   else
-    printf 'ok: %-30s fields[lens=%s ISO=%s ct=%s] keywords[%ss f/%s %s%s]\n' \
-      "$name" "$camname" "$iso_dom" "${ct:-n/a}" "$shutter" "$fnum" "$cprof" "$isokw"
+    printf '  %s✓%s %s[%d/%d]%s %-30s  %s%s fps%s  %s\n' \
+      "$GRN" "$R" "$D" "$idx" "$total" "$R" "$name" "$D" "$fpsdisp" "$R" "$det"
   fi
   count=$((count + 1))
 done
@@ -352,14 +389,14 @@ fi
   echo '  <resources>'
   cat "$res_tmp"
   echo '  </resources>'
-  echo '  <event name="DJI Metadata">'
+  printf '  <event name="%s">\n' "$(xml_escape "$(basename "$folder")")"
   cat "$clip_tmp"
   echo '  </event>'
   echo '</fcpxml>'
 } > "$fcpxml"
 
-echo
-echo "Wrote: $fcpxml"
-echo "Output folder: $outdir"
-echo "Clips: $count   Slow-motion retimed: $slowcount   Skipped: $skipped"
-echo "Import into Final Cut:  File > Import > XML…  (select the .fcpxml)"
+printf '\n  %s%s%s\n' "$D" "$rule" "$R"
+printf '  %s✓ %d written%s   %s↑ %d slow-mo restored%s   %s✗ %d skipped%s\n' \
+  "$GRN" "$count" "$R" "$CYN" "$slowcount" "$R" "$YEL" "$skipped" "$R"
+printf '  %sfcpxml%s  %s\n'  "$D" "$R" "$fcpxml"
+printf '  %simport%s  File ▸ Import ▸ XML…\n\n' "$D" "$R"
